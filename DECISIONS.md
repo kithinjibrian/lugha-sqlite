@@ -32,7 +32,7 @@ Rules:
 
 **Question:** `sqlite3_db_config` (the defensive flag) is variadic, and `SQLITE_TRANSIENT` is the pointer −1. Lugha can declare neither. How are they reached?
 
-**Outcome:** A C shim, `c/shim.c`, compiled through `[link] c = [...]`. It holds one-call functions only: `lugha_sqlite_db_config_flag`, `lugha_sqlite_bind_text`, `lugha_sqlite_bind_blob`. Every other binding is a Lugha extern. A new shim function needs a PRP saying why an extern can't do it.
+**Outcome:** A C shim, `c/shim.c`, compiled through `[link] c = [...]`. It holds one-call functions only: `lsqlite_db_config_flag`, `lsqlite_bind_text`, `lsqlite_bind_blob`. Every other binding is a Lugha extern. A new shim function needs a PRP saying why an extern can't do it.
 
 **Rationale:** Lugha's own decision (its CONTEXT.md: variadic externs, "recommended C shims for now; no PRP"); lughac supports package C files (milestone 87).
 

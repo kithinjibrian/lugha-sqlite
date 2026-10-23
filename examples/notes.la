@@ -1,0 +1,34 @@
+// A guarded database in memory: a table, a few notes, a query.
+// Build and run: lughac run examples/notes.la
+import sqlite { Database, Value, Guard };
+
+fun main() {
+    let db = match Database.open(":memory:") {
+        Ok(d) => d,
+        Err(e) => {
+            println("can't open: {e.message}");
+            return;
+        }
+    };
+    if let Err(e) = db.guard(Guard.untrusted()) {
+        println("can't guard: {e.message}");
+        return;
+    }
+    db.run("CREATE TABLE notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)", []).unwrap();
+    for text of ["Buy milk", "Pay rent", "Call the bank"] {
+        db.run("INSERT INTO notes (text) VALUES (?)", [Value.Text(text)]).unwrap();
+    }
+    let rows = db.query("SELECT id, text FROM notes ORDER BY text", [], 100).unwrap();
+    for row of rows.values {
+        match (row[0], row[1]) {
+            (Integer(id), Text(t)) => println("{id}: {t}"),
+            _ => {}
+        }
+    }
+    // A guardrail at work: untrusted SQL can't attach another file.
+    match db.run("ATTACH DATABASE 'elsewhere.db' AS other", []) {
+        Err(e) => println("refused: {e.message}"),
+        Ok(_) => println("attached?!"),
+    }
+    db.close();
+}

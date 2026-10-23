@@ -7,3 +7,5 @@ source = "src"
 # The system's SQLite (docs/SQLITE_VERSION), headers from libsqlite3-dev (DECISION-001).
 [link]
 libs = ["sqlite3"]
+# One-call functions for what a Lugha extern can't reach (DECISION-002).
+c = ["c/shim.c"]

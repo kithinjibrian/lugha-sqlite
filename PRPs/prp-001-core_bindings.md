@@ -53,9 +53,9 @@ Two pieces of SQLite's API can't be reached from a Lugha `extern`:
 
 Lugha's own answer is a C shim (`../lugha` CONTEXT.md: variadic externs, "recommended C shims for now"). lughac compiles a package's C files into every program using it (`[link] c = […]`, spec section 6). So:
 - **`c/shim.c` (new):** three functions, each one call into SQLite and nothing else:
-  - `int lugha_sqlite_db_config_flag(sqlite3 *db, int op, int on)` → `sqlite3_db_config(db, op, on, (int *)0)`;
-  - `int lugha_sqlite_bind_text(sqlite3_stmt *s, int i, const char *text, int n)` → `sqlite3_bind_text(s, i, text, n, SQLITE_TRANSIENT)`;
-  - `int lugha_sqlite_bind_blob(sqlite3_stmt *s, int i, const void *bytes, int n)` → `sqlite3_bind_blob(s, i, bytes, n, SQLITE_TRANSIENT)`.
+  - `int lsqlite_db_config_flag(sqlite3 *db, int op, int on)` → `sqlite3_db_config(db, op, on, (int *)0)`;
+  - `int lsqlite_bind_text(sqlite3_stmt *s, int i, const char *text, int n)` → `sqlite3_bind_text(s, i, text, n, SQLITE_TRANSIENT)`;
+  - `int lsqlite_bind_blob(sqlite3_stmt *s, int i, const void *bytes, int n)` → `sqlite3_bind_blob(s, i, bytes, n, SQLITE_TRANSIENT)`.
 - **`lugha.toml`:** `[link] c = ["c/shim.c"]`.
 - **`src/raw.la`** declares the three as externs, beside SQLite's own, their doc comments naming `c/shim.c`.
 - SQLite copies every bound text and blob, so Lugha's memory is never kept by C, as CLAUDE.md's extern rule says. The defensive flag is set by `Guard.untrusted()`.
@@ -95,28 +95,39 @@ Lugha's own answer is a C shim (`../lugha` CONTEXT.md: variadic externs, "recomm
 ## TESTS TO WRITE
 
 Against `:memory:` or `test/tmp/`:
-- [ ] Open, create, insert, query: columns and each value type (integer, real, text, blob, null) round-trip.
-- [ ] Parameters: each type binds. A value with quotes in it is stored as text, never run as SQL. Text and blobs are copied: changing the Lugha value after binding changes nothing stored.
-- [ ] Errors: a syntax error, a constraint, a read-only file (`Database.open_read_only`), each with its kind and message.
-- [ ] `batch`: all or nothing; a failing statement rolls back the earlier ones.
-- [ ] Guardrails:
+- [x] Open, create, insert, query: columns and each value type (integer, real, text, blob, null) round-trip.
+- [x] Parameters: each type binds. A value with quotes in it is stored as text, never run as SQL. Text and blobs are copied: changing the Lugha value after binding changes nothing stored.
+- [x] Errors: a syntax error, a constraint, a read-only file (`Database.open_read_only`), each with its kind and message.
+- [x] `batch`: all or nothing; a failing statement rolls back the earlier ones.
+- [x] Guardrails:
   - `ATTACH` and a denied `PRAGMA` fail as `Denied`;
   - a recursive query past the time limit fails as `Interrupted`;
   - inserting past `max_page_count` fails as `Full`;
   - SQL longer than the limit fails as `TooBig`;
   - with the defensive flag on, `PRAGMA writable_schema = ON` has no effect;
   - `max_rows` cuts.
-- [ ] `on_change` reports the table and rowid of inserts, updates and deletes.
-- [ ] Closing with a hook set, and closing twice, are safe.
+- [x] `on_change` reports the table and rowid of inserts, updates and deletes.
+- [x] Closing with a hook set, and closing twice, are safe.
 
 ## ROLLBACK PLAN
 - Branch: `main`; the package is new, so revert to the skeleton.
 
 ## ACCEPTANCE CRITERIA
-- [ ] Every extern checked against `/usr/include/sqlite3.h` (3.46.1).
+- [x] Every extern checked against `/usr/include/sqlite3.h` (3.46.1).
 - [ ] `lughac test test/` passes (the owner runs it); `examples/notes.la` builds.
 - [ ] `lughac fmt --check src examples test` is clean; every public item documented; no file over 400 lines.
-- [ ] CHANGELOG.md updated; DECISION-002 (the shim) recorded.
+- [x] CHANGELOG.md updated; DECISION-002 (the shim) recorded.
 
 ## VALIDATION
 - `lughac fmt --check src examples test`, `lughac test test/`, `lughac build examples/notes.la`
+
+## AMENDMENTS (session 3, while building)
+
+- **The shim's functions are `lsqlite_…`,** not `lugha_sqlite_…`: lughac reserves names starting with `lugha_` (E0306).
+- **One statement per call is checked:** after preparing, the rest of the SQL must be only spaces and `;`, or the call fails as `Misuse` ("Only one statement at a time"), so a second statement can't ride along.
+- **Text is read as bytes** (`sqlite3_column_text` then `sqlite3_column_bytes`, copied with `c_read`), so text holding a NUL comes back whole. Text that isn't UTF-8 (a blob cast to text) comes back as `Bytes`.
+- **The authorizer also denies any database but `main` and `temp`,** and matches names without case (ASCII), since SQLite passes them as written.
+- **Hooks aren't cleared before close.** SQLite never calls them after `sqlite3_close_v2`, and a callback parameter can't be passed as `NULL` from Lugha. The authorizer's and progress handler's closures are kept for the program's life: SQLite gives them no release.
+- **The time limit** is a progress handler checked every 1000 steps against a deadline each call sets (`run`, `query`, `batch`).
+- **Tests added:** the defensive flag on its own (with the authorizer off), and `decide` action by action.
+

@@ -1,0 +1,154 @@
+/**
+ * Guardrails for SQL a program didn't write, as SQLite's security guidance
+ * lays them out: an authorizer refusing what's dangerous, a time limit, a
+ * size limit, limits on SQL and value length, `trusted_schema` off and the
+ * defensive flag. `Guard.untrusted()` turns them all on with defaults.
+ *
+ * Depends on: raw, errors
+ * Used by: lib
+ */
+import raw;
+import errors { SqliteError };
+
+/** What a database refuses, and how far it lets a statement go. */
+public struct Guard {
+    /** The authorizer: no ATTACH, no extensions, safe PRAGMAs only, no writing the schema tables. */
+    public deny: bool,
+    /** How long one call (a run, a query, a batch) may take, in milliseconds; 0 for no limit. */
+    public time_limit_ms: i64,
+    /** The database file's largest size, in bytes; 0 for no limit. */
+    public max_bytes: i64,
+    /** The longest SQL text, in bytes. */
+    public max_sql: i64,
+    /** The longest text or blob value, in bytes. */
+    public max_value: i64,
+    /** SQLite's defensive flag: the schema can't be written by hand. */
+    public defensive: bool,
+}
+
+/** PRAGMAs untrusted SQL may use: reading the schema, and its own version number. */
+const SAFE_PRAGMAS: string[] = [
+    "user_version",
+    "table_info",
+    "table_xinfo",
+    "table_list",
+    "index_list",
+    "index_info",
+    "index_xinfo",
+    "foreign_key_list",
+];
+
+/** The tables that hold the schema itself. */
+const SCHEMA_TABLES: string[] = [
+    "sqlite_master",
+    "sqlite_schema",
+    "sqlite_temp_master",
+    "sqlite_temp_schema",
+];
+
+impl Guard {
+    /**
+     * Every guardrail on: 1 s per call, 100 MB, 100 KB of SQL, 4 MB per value.
+     *
+     * Example:
+     *     db.guard(Guard.untrusted())?
+     */
+    public fun untrusted(): Guard = Guard {
+        deny: true,
+        time_limit_ms: 1000,
+        max_bytes: 100 * 1024 * 1024,
+        max_sql: 100 * 1024,
+        max_value: 4 * 1024 * 1024,
+        defensive: true,
+    };
+}
+
+/**
+ * Answers the authorizer for one action while a statement is prepared:
+ * `SQLITE_OK`, or `SQLITE_DENY`.
+ *
+ * @param action SQLite's action code (`SQLITE_PRAGMA`, `SQLITE_INSERT`…)
+ * @param a, b the action's two details (a table, a PRAGMA's name and value, a function's name)
+ * @param database the database it touches (`main`, `temp`, an attached one)
+ * @returns `SQLITE_OK` or `SQLITE_DENY`
+ *
+ * Example:
+ *     decide(raw.SQLITE_ATTACH, Some("x.db"), None, None)
+ */
+public fun decide(
+    action: i32,
+    a: Option<string>,
+    b: Option<string>,
+    database: Option<string>,
+): i32 {
+    let ok = raw.SQLITE_OK;
+    let deny = raw.SQLITE_DENY;
+    if action == raw.SQLITE_ATTACH || action == raw.SQLITE_DETACH || action == raw.SQLITE_CREATE_VTABLE || action == raw.SQLITE_DROP_VTABLE {
+        return deny;
+    }
+    if action == raw.SQLITE_PRAGMA {
+        let name = lower(a.unwrap_or(""));
+        return if SAFE_PRAGMAS.any(fun(p: string) = p == name) { ok } else { deny };
+    }
+    if action == raw.SQLITE_FUNCTION {
+        // A function's name is the second detail; loading code is never allowed.
+        return if lower(b.unwrap_or("")) == "load_extension" { deny } else { ok };
+    }
+    let changes = action == raw.SQLITE_INSERT || action == raw.SQLITE_UPDATE || action == raw.SQLITE_DELETE;
+    if changes && SCHEMA_TABLES.any(fun(t: string) = t == lower(a.unwrap_or(""))) {
+        return deny;
+    }
+    // Only its own database: never one attached by other means.
+    match database {
+        Some(d) if d != "main" && d != "temp" => deny,
+        _ => ok,
+    }
+}
+
+/**
+ * Applies a guard to an open connection: the size limit, `trusted_schema`
+ * and the defensive flag first, while PRAGMAs still run, then the limits
+ * and the authorizer. The time limit is the caller's (`lib`), which owns
+ * the deadline.
+ */
+fun apply(
+    db: raw.sqlite3,
+    g: Guard,
+    page_size: i64,
+    run: fun(string): Result<(), SqliteError>,
+): Result<(), SqliteError> {
+    if g.max_bytes > 0 && page_size > 0 {
+        let pages = if g.max_bytes / page_size < 1 { 1 } else { g.max_bytes / page_size };
+        // Our own number, never the caller's text.
+        run("PRAGMA max_page_count = {pages}")?;
+    }
+    run("PRAGMA trusted_schema = OFF")?;
+    if g.defensive {
+        raw.lsqlite_db_config_flag(db, raw.SQLITE_DBCONFIG_DEFENSIVE, 1);
+    }
+    raw.sqlite3_limit(db, raw.SQLITE_LIMIT_SQL_LENGTH, g.max_sql as i32);
+    raw.sqlite3_limit(db, raw.SQLITE_LIMIT_LENGTH, g.max_value as i32);
+    raw.sqlite3_limit(db, raw.SQLITE_LIMIT_ATTACHED, 0);
+    if g.deny {
+        raw.sqlite3_set_authorizer(
+            db,
+            fun(
+                action: i32,
+                a: Option<string>,
+                b: Option<string>,
+                database: Option<string>,
+                _trigger: Option<string>,
+            ): i32 = decide(action, a, b, database),
+        );
+    }
+    Ok(())
+}
+
+/** ASCII letters made lowercase: SQLite's names are matched without case. */
+fun lower(s: string): string {
+    let mut out: u8[] = [];
+    for b of s {
+        out.push(if b >= 65 && b <= 90 { b + 32 } else { b });
+    }
+    string_from_utf8(out).unwrap_or(s)
+}

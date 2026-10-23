@@ -1,0 +1,248 @@
+/**
+ * sqlite.raw: the parts of SQLite's C API (3.46.1) this package uses,
+ * declared exactly as /usr/include/sqlite3.h declares them, and the three
+ * functions of `c/shim.c` (DECISION-002). No logic. Each `#define` used is a
+ * `public const` of the same name.
+ *
+ * Ownership is stated on every extern that takes or returns a pointer. The
+ * safe modules beside this one free each handle exactly once.
+ *
+ * Used by: lib, errors, statements, guards
+ */
+
+// ---- Handles (opaque C pointers) ----
+
+/** `sqlite3`, a database connection (sqlite3.h). */
+public extern type sqlite3;
+/** `sqlite3_stmt`, a prepared statement (sqlite3.h). */
+public extern type sqlite3_stmt;
+
+// ---- Result codes (sqlite3.h) ----
+
+public const SQLITE_OK: i32 = 0;
+public const SQLITE_ERROR: i32 = 1;
+public const SQLITE_BUSY: i32 = 5;
+public const SQLITE_LOCKED: i32 = 6;
+public const SQLITE_NOMEM: i32 = 7;
+public const SQLITE_READONLY: i32 = 8;
+public const SQLITE_INTERRUPT: i32 = 9;
+public const SQLITE_FULL: i32 = 13;
+public const SQLITE_CANTOPEN: i32 = 14;
+public const SQLITE_TOOBIG: i32 = 18;
+public const SQLITE_CONSTRAINT: i32 = 19;
+public const SQLITE_MISUSE: i32 = 21;
+public const SQLITE_AUTH: i32 = 23;
+public const SQLITE_RANGE: i32 = 25;
+public const SQLITE_ROW: i32 = 100;
+public const SQLITE_DONE: i32 = 101;
+
+// ---- Open flags (sqlite3.h) ----
+
+public const SQLITE_OPEN_READONLY: i32 = 0x00000001;
+public const SQLITE_OPEN_READWRITE: i32 = 0x00000002;
+public const SQLITE_OPEN_CREATE: i32 = 0x00000004;
+
+// ---- Column types (sqlite3.h; SQLITE_TEXT is SQLITE3_TEXT) ----
+
+public const SQLITE_INTEGER: i32 = 1;
+public const SQLITE_FLOAT: i32 = 2;
+public const SQLITE_TEXT: i32 = 3;
+public const SQLITE_BLOB: i32 = 4;
+public const SQLITE_NULL: i32 = 5;
+
+// ---- Authorizer return codes and action codes (sqlite3.h) ----
+
+public const SQLITE_DENY: i32 = 1;
+public const SQLITE_IGNORE: i32 = 2;
+public const SQLITE_CREATE_INDEX: i32 = 1;
+public const SQLITE_CREATE_TABLE: i32 = 2;
+public const SQLITE_CREATE_TEMP_INDEX: i32 = 3;
+public const SQLITE_CREATE_TEMP_TABLE: i32 = 4;
+public const SQLITE_CREATE_TEMP_TRIGGER: i32 = 5;
+public const SQLITE_CREATE_TEMP_VIEW: i32 = 6;
+public const SQLITE_CREATE_TRIGGER: i32 = 7;
+public const SQLITE_CREATE_VIEW: i32 = 8;
+public const SQLITE_DELETE: i32 = 9;
+public const SQLITE_DROP_INDEX: i32 = 10;
+public const SQLITE_DROP_TABLE: i32 = 11;
+public const SQLITE_DROP_TEMP_INDEX: i32 = 12;
+public const SQLITE_DROP_TEMP_TABLE: i32 = 13;
+public const SQLITE_DROP_TEMP_TRIGGER: i32 = 14;
+public const SQLITE_DROP_TEMP_VIEW: i32 = 15;
+public const SQLITE_DROP_TRIGGER: i32 = 16;
+public const SQLITE_DROP_VIEW: i32 = 17;
+public const SQLITE_INSERT: i32 = 18;
+public const SQLITE_PRAGMA: i32 = 19;
+public const SQLITE_READ: i32 = 20;
+public const SQLITE_SELECT: i32 = 21;
+public const SQLITE_TRANSACTION: i32 = 22;
+public const SQLITE_UPDATE: i32 = 23;
+public const SQLITE_ATTACH: i32 = 24;
+public const SQLITE_DETACH: i32 = 25;
+public const SQLITE_ALTER_TABLE: i32 = 26;
+public const SQLITE_REINDEX: i32 = 27;
+public const SQLITE_ANALYZE: i32 = 28;
+public const SQLITE_CREATE_VTABLE: i32 = 29;
+public const SQLITE_DROP_VTABLE: i32 = 30;
+public const SQLITE_FUNCTION: i32 = 31;
+public const SQLITE_SAVEPOINT: i32 = 32;
+public const SQLITE_RECURSIVE: i32 = 33;
+
+// ---- Limits and options (sqlite3.h) ----
+
+public const SQLITE_LIMIT_LENGTH: i32 = 0;
+public const SQLITE_LIMIT_SQL_LENGTH: i32 = 1;
+public const SQLITE_LIMIT_ATTACHED: i32 = 7;
+public const SQLITE_DBCONFIG_DEFENSIVE: i32 = 1010;
+
+// ---- Connections ----
+
+/**
+ * Opens `filename` into `db` (sqlite3.h). `db` is set even on most
+ * failures and must still be closed with `sqlite3_close_v2`. `zVfs` is the
+ * default VFS when `None`.
+ */
+public extern fun sqlite3_open_v2(
+    filename: string,
+    out db: Option<sqlite3>,
+    flags: i32,
+    zVfs: Option<string>,
+): i32;
+
+/** Closes a connection; with statements still open, closes once they're finalized (sqlite3.h). */
+public extern fun sqlite3_close_v2(db: sqlite3): i32;
+
+/** The last error's message, owned by SQLite and valid until the next call: Lugha copies it (sqlite3.h). */
+public extern fun sqlite3_errmsg(db: sqlite3): string;
+
+/** The last error's extended result code (sqlite3.h). */
+public extern fun sqlite3_extended_errcode(db: sqlite3): i32;
+
+/** A result code's English words, owned by SQLite: Lugha copies them (sqlite3.h). */
+public extern fun sqlite3_errstr(code: i32): string;
+
+/** Rows changed by the last INSERT, UPDATE or DELETE (sqlite3.h). */
+public extern fun sqlite3_changes64(db: sqlite3): i64;
+
+/** The rowid of the last INSERT (sqlite3.h). */
+public extern fun sqlite3_last_insert_rowid(db: sqlite3): i64;
+
+// ---- Statements ----
+
+/**
+ * Compiles the first statement of `zSql` into `ppStmt`, freed with
+ * `sqlite3_finalize`; `pzTail` points into `zSql` just past it (sqlite3.h).
+ * `nByte` -1 reads to the NUL. On failure `ppStmt` is `None`.
+ */
+public extern fun sqlite3_prepare_v2(
+    db: sqlite3,
+    zSql: string,
+    nByte: i32,
+    out ppStmt: Option<sqlite3_stmt>,
+    out pzTail: Option<CPtr>,
+): i32;
+
+/** Runs a statement to its next row (`SQLITE_ROW`) or its end (`SQLITE_DONE`) (sqlite3.h). */
+public extern fun sqlite3_step(stmt: sqlite3_stmt): i32;
+
+/** Resets a statement to run again; its bindings stay (sqlite3.h). */
+public extern fun sqlite3_reset(stmt: sqlite3_stmt): i32;
+
+/** Frees a statement; it can't be used after (sqlite3.h). */
+public extern fun sqlite3_finalize(stmt: sqlite3_stmt): i32;
+
+/** How many `?` parameters a statement has (sqlite3.h). */
+public extern fun sqlite3_bind_parameter_count(stmt: sqlite3_stmt): i32;
+
+/** Binds an integer to parameter `index`, from 1 (sqlite3.h). */
+public extern fun sqlite3_bind_int64(stmt: sqlite3_stmt, index: i32, value: i64): i32;
+
+/** Binds a real number to parameter `index` (sqlite3.h). */
+public extern fun sqlite3_bind_double(stmt: sqlite3_stmt, index: i32, value: f64): i32;
+
+/** Binds NULL to parameter `index` (sqlite3.h). */
+public extern fun sqlite3_bind_null(stmt: sqlite3_stmt, index: i32): i32;
+
+/** How many columns a statement's rows have (sqlite3.h). */
+public extern fun sqlite3_column_count(stmt: sqlite3_stmt): i32;
+
+/** Column `n`'s name, owned by SQLite: Lugha copies it (sqlite3.h). */
+public extern fun sqlite3_column_name(stmt: sqlite3_stmt, n: i32): string;
+
+/** The current row's column `col` type: `SQLITE_INTEGER`…`SQLITE_NULL` (sqlite3.h). */
+public extern fun sqlite3_column_type(stmt: sqlite3_stmt, col: i32): i32;
+
+/** The current row's column `col` as an integer (sqlite3.h). */
+public extern fun sqlite3_column_int64(stmt: sqlite3_stmt, col: i32): i64;
+
+/** The current row's column `col` as a real (sqlite3.h). */
+public extern fun sqlite3_column_double(stmt: sqlite3_stmt, col: i32): f64;
+
+/**
+ * The current row's column `col` as UTF-8 text, owned by SQLite until the
+ * next step (sqlite3.h). Read with `c_read` and `sqlite3_column_bytes`,
+ * after this call, so text holding a NUL comes back whole; `None` for NULL.
+ */
+public extern fun sqlite3_column_text(stmt: sqlite3_stmt, col: i32): Option<CPtr>;
+
+/** The current row's column `col` as bytes, owned by SQLite until the next step; `None` when empty (sqlite3.h). */
+public extern fun sqlite3_column_blob(stmt: sqlite3_stmt, col: i32): Option<CPtr>;
+
+/** The size in bytes of what `sqlite3_column_text` or `_blob` just returned (sqlite3.h). */
+public extern fun sqlite3_column_bytes(stmt: sqlite3_stmt, col: i32): i32;
+
+// ---- Guardrails and hooks ----
+
+/**
+ * Sets the authorizer: `x_auth` is asked about each action while a
+ * statement is prepared, and answers `SQLITE_OK`, `SQLITE_DENY` or
+ * `SQLITE_IGNORE` (sqlite3.h). `data` is lughac's pin of the closure, kept
+ * for the program's life (SQLite gives no release).
+ */
+public extern fun sqlite3_set_authorizer(
+    db: sqlite3,
+    x_auth: fun(data, i32, Option<string>, Option<string>, Option<string>, Option<string>): i32,
+    data: data,
+): i32;
+
+/**
+ * Calls `x_progress` every `n` virtual machine steps; a non-zero answer
+ * interrupts the statement (sqlite3.h). `data` as for the authorizer.
+ */
+public extern fun sqlite3_progress_handler(
+    db: sqlite3,
+    n: i32,
+    x_progress: fun(data): i32,
+    data: data,
+);
+
+/** Stops whatever the connection is running, as soon as it can (sqlite3.h). */
+public extern fun sqlite3_interrupt(db: sqlite3);
+
+/** Sets limit `id` to `new_val` (negative leaves it), returning the old value (sqlite3.h). */
+public extern fun sqlite3_limit(db: sqlite3, id: i32, new_val: i32): i32;
+
+/** Caps the memory SQLite may use, process-wide; 0 removes the cap (sqlite3.h). Returns the old cap. */
+public extern fun sqlite3_hard_heap_limit64(n: i64): i64;
+
+/**
+ * Calls `x_update` after each row inserted (`SQLITE_INSERT`), updated or
+ * deleted in a rowid table, with its database and table names and rowid
+ * (sqlite3.h). Returns the previous hook's user data. `data` as above.
+ */
+public extern fun sqlite3_update_hook(
+    db: sqlite3,
+    x_update: fun(data, i32, Option<string>, Option<string>, i64),
+    data: data,
+): Option<CPtr>;
+
+// ---- c/shim.c (DECISION-002) ----
+
+/** Sets an on/off option such as `SQLITE_DBCONFIG_DEFENSIVE`: `sqlite3_db_config(db, op, on, NULL)` (c/shim.c). */
+public extern fun lsqlite_db_config_flag(db: sqlite3, op: i32, on: i32): i32;
+
+/** Binds `bytes` bytes of `text` to parameter `index`, copied by SQLite (`SQLITE_TRANSIENT`, c/shim.c). */
+public extern fun lsqlite_bind_text(stmt: sqlite3_stmt, index: i32, text: string, bytes: i32): i32;
+
+/** Binds `bytes` bytes of `data` to parameter `index`, copied by SQLite (`SQLITE_TRANSIENT`, c/shim.c). */
+public extern fun lsqlite_bind_blob(stmt: sqlite3_stmt, index: i32, data: u8[], bytes: i32): i32;

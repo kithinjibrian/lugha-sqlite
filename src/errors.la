@@ -1,0 +1,86 @@
+/**
+ * Errors: SQLite's result codes as a kind a program can match on, with
+ * SQLite's own code and message kept. Every failure in this package is one
+ * of these, never a panic.
+ *
+ * Depends on: raw
+ * Used by: lib, statements, guards
+ */
+import raw;
+
+/** What went wrong, by kind. */
+public enum Kind {
+    /** The database is in use elsewhere (`SQLITE_BUSY`, `SQLITE_LOCKED`). */
+    Busy,
+    /** A constraint failed: UNIQUE, NOT NULL, CHECK, a foreign key. */
+    Constraint,
+    /** The database was opened read-only, or the file can't be written. */
+    ReadOnly,
+    /** The authorizer refused it (`SQLITE_AUTH`): a guardrail. */
+    Denied,
+    /** Stopped: past the time limit, or interrupted (`SQLITE_INTERRUPT`). */
+    Interrupted,
+    /** A string, blob or the SQL itself is over its limit (`SQLITE_TOOBIG`). */
+    TooBig,
+    /** The database is at its size limit, or the disk is full (`SQLITE_FULL`). */
+    Full,
+    /** The call itself was wrong: a closed database, a missing value, two statements at once. */
+    Misuse,
+    /** Anything else, such as a syntax error: see the message. */
+    Other,
+}
+
+/** A failure: its kind, SQLite's result codes and SQLite's words. */
+public struct SqliteError {
+    public kind: Kind,
+    /** SQLite's primary result code. */
+    public code: i32,
+    /** SQLite's extended result code, or the primary one when there's none. */
+    public extended: i32,
+    public message: string,
+}
+
+/**
+ * Returns the kind of a result code: its low byte is the primary code.
+ *
+ * Example:
+ *     kind_of(raw.SQLITE_CONSTRAINT)
+ */
+public fun kind_of(code: i32): Kind {
+    let primary = code & 0xff;
+    if primary == raw.SQLITE_BUSY || primary == raw.SQLITE_LOCKED {
+        Kind.Busy
+    } else if primary == raw.SQLITE_CONSTRAINT {
+        Kind.Constraint
+    } else if primary == raw.SQLITE_READONLY {
+        Kind.ReadOnly
+    } else if primary == raw.SQLITE_AUTH {
+        Kind.Denied
+    } else if primary == raw.SQLITE_INTERRUPT {
+        Kind.Interrupted
+    } else if primary == raw.SQLITE_TOOBIG {
+        Kind.TooBig
+    } else if primary == raw.SQLITE_FULL {
+        Kind.Full
+    } else if primary == raw.SQLITE_MISUSE || primary == raw.SQLITE_RANGE {
+        Kind.Misuse
+    } else {
+        Kind.Other
+    }
+}
+
+/** The connection's last error, for a failed `code`. */
+fun failure(db: raw.sqlite3, code: i32): SqliteError = SqliteError {
+    kind: kind_of(code),
+    code: code & 0xff,
+    extended: raw.sqlite3_extended_errcode(db),
+    message: raw.sqlite3_errmsg(db),
+};
+
+/** A misuse this package found itself, before SQLite was asked. */
+fun misuse(message: string): SqliteError = SqliteError {
+    kind: Kind.Misuse,
+    code: raw.SQLITE_MISUSE,
+    extended: raw.SQLITE_MISUSE,
+    message: message,
+};

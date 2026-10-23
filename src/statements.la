@@ -1,0 +1,186 @@
+/**
+ * Statements: one SQL statement prepared, its parameters bound, run to its
+ * end or read row by row, and always finalized. Values only ever go in as
+ * parameters; text and bytes are copied by SQLite (DECISION-002).
+ *
+ * Depends on: raw, errors, values
+ * Used by: lib, guards
+ */
+import raw;
+import errors { SqliteError, failure, misuse };
+import values { Value, Rows };
+
+/**
+ * Prepares `sql` (one statement) and binds `params`, then hands the
+ * statement to `use`; the statement is finalized whatever `use` returns.
+ */
+fun with_statement<T>(
+    db: raw.sqlite3,
+    sql: string,
+    params: Value[],
+    use: fun(raw.sqlite3_stmt): Result<T, SqliteError>,
+    empty: T,
+): Result<T, SqliteError> {
+    let mut stmt: Option<raw.sqlite3_stmt> = None;
+    let mut tail: Option<CPtr> = None;
+    let code = raw.sqlite3_prepare_v2(db, sql, -1, out stmt, out tail);
+    if code != raw.SQLITE_OK {
+        return Err(failure(db, code));
+    }
+    let s = match stmt {
+        Some(s) => s,
+        // Only spaces or comments: nothing to run.
+        None => {
+            return Ok(empty);
+        }
+    };
+    if let Some(t) = tail {
+        if !blank_from(t, sql.len) {
+            raw.sqlite3_finalize(s);
+            return Err(misuse("Only one statement at a time"));
+        }
+    }
+    let result = match bind_all(db, s, params) {
+        Ok(()) => use(s),
+        Err(e) => Err(e),
+    };
+    raw.sqlite3_finalize(s);
+    result
+}
+
+/** Whether the text from `p` to its NUL (at most `most` bytes) is only spaces and `;`. */
+fun blank_from(p: CPtr, most: i64): bool {
+    let mut i: u64 = 0;
+    while (i as i64) < most {
+        let b = c_read(p, i, 1)[0];
+        if b == 0 {
+            return true;
+        }
+        if b != 32 && b != 9 && b != 10 && b != 13 && b != 59 {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/** Binds every parameter, from 1; the count must be the statement's. */
+fun bind_all(db: raw.sqlite3, s: raw.sqlite3_stmt, params: Value[]): Result<(), SqliteError> {
+    let wanted = raw.sqlite3_bind_parameter_count(s) as i64;
+    if wanted != params.len {
+        return Err(misuse("This statement takes {wanted} values; it was given {params.len}"));
+    }
+    let mut i = 0;
+    for v of params {
+        let index = (i + 1) as i32;
+        let code = match v {
+            Integer(n) => raw.sqlite3_bind_int64(s, index, n),
+            Real(x) => raw.sqlite3_bind_double(s, index, x),
+            Text(t) => raw.lsqlite_bind_text(s, index, t, t.len as i32),
+            Bytes(b) => raw.lsqlite_bind_blob(s, index, b, b.len as i32),
+            Null => raw.sqlite3_bind_null(s, index),
+        };
+        if code != raw.SQLITE_OK {
+            return Err(failure(db, code));
+        }
+        i += 1;
+    }
+    Ok(())
+}
+
+/** Runs `sql` to its end, ignoring any rows. */
+fun run_to_end(
+    db: raw.sqlite3,
+    sql: string,
+    params: Value[],
+): Result<(), SqliteError> = with_statement(
+    db,
+    sql,
+    params,
+    fun(s: raw.sqlite3_stmt): Result<(), SqliteError> {
+        while true {
+            let code = raw.sqlite3_step(s);
+            if code == raw.SQLITE_DONE {
+                return Ok(());
+            }
+            if code != raw.SQLITE_ROW {
+                return Err(failure(db, code));
+            }
+        }
+        Ok(())
+    },
+    (),
+);
+
+/** Runs `sql` and reads up to `max_rows` rows. */
+fun read_rows(
+    db: raw.sqlite3,
+    sql: string,
+    params: Value[],
+    max_rows: i64,
+): Result<Rows, SqliteError> = with_statement(
+    db,
+    sql,
+    params,
+    fun(s: raw.sqlite3_stmt): Result<Rows, SqliteError> {
+        let n = raw.sqlite3_column_count(s);
+        let mut columns: string[] = [];
+        for i in 0..n as i64 {
+            columns.push(raw.sqlite3_column_name(s, i as i32));
+        }
+        let mut got: Value[][] = [];
+        while true {
+            let code = raw.sqlite3_step(s);
+            if code == raw.SQLITE_DONE {
+                return Ok(Rows { columns: columns, values: got, cut: false });
+            }
+            if code != raw.SQLITE_ROW {
+                return Err(failure(db, code));
+            }
+            if got.len >= max_rows {
+                return Ok(Rows { columns: columns, values: got, cut: true });
+            }
+            let mut row: Value[] = [];
+            for i in 0..n as i64 {
+                row.push(column(s, i as i32));
+            }
+            got.push(row);
+        }
+        Ok(Rows { columns: columns, values: got, cut: false })
+    },
+    Rows { columns: [], values: [], cut: false },
+);
+
+/** One column of the current row. */
+fun column(s: raw.sqlite3_stmt, i: i32): Value {
+    let kind = raw.sqlite3_column_type(s, i);
+    if kind == raw.SQLITE_INTEGER {
+        return Value.Integer(raw.sqlite3_column_int64(s, i));
+    }
+    if kind == raw.SQLITE_FLOAT {
+        return Value.Real(raw.sqlite3_column_double(s, i));
+    }
+    if kind == raw.SQLITE_TEXT {
+        // The pointer first, then its size, as SQLite asks.
+        let p = raw.sqlite3_column_text(s, i);
+        let n = raw.sqlite3_column_bytes(s, i);
+        let bytes = match p {
+            Some(at) if n > 0 => c_read(at, 0, n as u64),
+            _ => [],
+        };
+        // Text SQLite holds is UTF-8 unless a blob was cast to it: then it comes back as bytes.
+        return match string_from_utf8(bytes) {
+            Ok(t) => Value.Text(t),
+            Err(_) => Value.Bytes(bytes),
+        };
+    }
+    if kind == raw.SQLITE_BLOB {
+        let p = raw.sqlite3_column_blob(s, i);
+        let n = raw.sqlite3_column_bytes(s, i);
+        return Value.Bytes(match p {
+            Some(at) if n > 0 => c_read(at, 0, n as u64),
+            _ => [],
+        });
+    }
+    Value.Null
+}

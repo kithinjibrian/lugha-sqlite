@@ -1,7 +1,231 @@
 /**
- * sqlite: a Lugha library. This is its entry, `import sqlite;`;
- * its other modules live beside it in `src/`.
+ * sqlite: SQLite for Lugha (`import sqlite;`). Open a database, run SQL
+ * with bound parameters, read its rows, run several statements as one
+ * transaction, hear about changes, and guard a database that runs SQL its
+ * program didn't write. Values only ever go in as parameters. Every handle
+ * is the package's: closed and finalized exactly once.
+ *
+ * Depends on: raw, errors, values, statements, guards, std.time
  */
+import raw;
+import std.time;
+import statements { run_to_end, read_rows };
+public import errors { Kind, SqliteError, kind_of };
+public import values { Value, Rows, Ran };
+public import guards { Guard, decide };
 
-// Returns a greeting from this library.
-public fun greet(who: string): string = "Hello, {who}, from sqlite!";
+/** An open database. Close it with `close`; using it after is a `Misuse` error. */
+public struct Database {
+    handle: raw.sqlite3,
+    open: Ref<bool>,
+    /** How long a call may take, in milliseconds (0: no limit), set by `guard`. */
+    limit_ms: Ref<i64>,
+    /** When the current call must end, in milliseconds since 1970 (0: none). */
+    deadline: Ref<i64>,
+}
+
+impl Database {
+    /**
+     * Opens a database file for reading and writing, made if missing;
+     * `":memory:"` is a fresh database in memory.
+     *
+     * @returns the database; `Err` with SQLite's reason (`CantOpen` as `Other`)
+     *
+     * Example:
+     *     Database.open("notes.db")?
+     */
+    public fun open(path: string): Result<Database, SqliteError> = opened(
+        path,
+        raw.SQLITE_OPEN_READWRITE | raw.SQLITE_OPEN_CREATE,
+    );
+
+    /**
+     * Opens an existing database file read-only: every write fails as `ReadOnly`.
+     *
+     * Example:
+     *     Database.open_read_only("notes.db")?
+     */
+    public fun open_read_only(path: string): Result<Database, SqliteError> = opened(
+        path,
+        raw.SQLITE_OPEN_READONLY,
+    );
+
+    /**
+     * Runs one statement that changes data, with its parameters.
+     *
+     * @param sql one statement, with a `?` for each value
+     * @param params the values, in order
+     * @returns the rows changed and the last rowid; `Err` with why
+     *
+     * Example:
+     *     db.run("INSERT INTO notes (text) VALUES (?)", [Value.Text("Buy milk")])?
+     */
+    public fun run(self, sql: string, params: Value[]): Result<Ran, SqliteError> {
+        self.live()?;
+        self.start();
+        run_to_end(self.handle, sql, params)?;
+        Ok(Ran {
+            changes: raw.sqlite3_changes64(self.handle),
+            last_rowid: raw.sqlite3_last_insert_rowid(self.handle),
+        })
+    }
+
+    /**
+     * Runs one statement and reads its rows, at most `max_rows` of them.
+     *
+     * Example:
+     *     db.query("SELECT id, text FROM notes WHERE id > ?", [Value.Integer(0)], 100)?
+     */
+    public fun query(self, sql: string, params: Value[], max_rows: i64): Result<Rows, SqliteError> {
+        self.live()?;
+        self.start();
+        read_rows(self.handle, sql, params, max_rows)
+    }
+
+    /**
+     * Runs statements as one transaction: all of them, or none if any fails.
+     *
+     * Example:
+     *     db.batch([("UPDATE t SET x = ?", [Value.Integer(1)]), ("DELETE FROM u", [])])?
+     */
+    public fun batch(self, steps: (string, Value[])[]): Result<Ran, SqliteError> {
+        self.live()?;
+        self.start();
+        run_to_end(self.handle, "BEGIN", [])?;
+        for (sql, params) of steps {
+            if let Err(e) = run_to_end(self.handle, sql, params) {
+                // Undo what ran before it; the first failure is what's reported.
+                let _ = run_to_end(self.handle, "ROLLBACK", []);
+                return Err(e);
+            }
+        }
+        if let Err(e) = run_to_end(self.handle, "COMMIT", []) {
+            let _ = run_to_end(self.handle, "ROLLBACK", []);
+            return Err(e);
+        }
+        Ok(Ran {
+            changes: raw.sqlite3_changes64(self.handle),
+            last_rowid: raw.sqlite3_last_insert_rowid(self.handle),
+        })
+    }
+
+    /**
+     * Calls `heard` after each row inserted, updated or deleted in a rowid
+     * table, with its table and rowid (SQLite's update hook). Replaces any
+     * earlier one.
+     *
+     * Example:
+     *     db.on_change(fun(table: string, rowid: i64) = println("{table} {rowid}"))
+     */
+    public fun on_change(self, heard: fun(string, i64)) {
+        if !self.open.get() {
+            return;
+        }
+        raw.sqlite3_update_hook(
+            self.handle,
+            fun(_op: i32, _database: Option<string>, table: Option<string>, rowid: i64) = heard(
+                table.unwrap_or(""),
+                rowid,
+            ),
+        );
+    }
+
+    /**
+     * Guards the database for SQL its program didn't write (`Guard.untrusted()`):
+     * the authorizer, a time limit per call, size and length limits,
+     * `trusted_schema` off and the defensive flag.
+     *
+     * Example:
+     *     db.guard(Guard.untrusted())?
+     */
+    public fun guard(self, g: Guard): Result<(), SqliteError> {
+        self.live()?;
+        let size = read_rows(self.handle, "PRAGMA page_size", [], 1)?;
+        // SQLite's default page size when the answer is odd.
+        let page = if size.values.len > 0 {
+            match size.values[0][0] {
+                Integer(n) => n,
+                _ => 4096,
+            }
+        } else {
+            4096
+        };
+        let h = self.handle;
+        guards.apply(h, g, page, fun(sql: string) = run_to_end(h, sql, []))?;
+        self.limit_ms.set(g.time_limit_ms);
+        if g.time_limit_ms > 0 {
+            let deadline = self.deadline;
+            // Checked every 1000 steps: cheap, and fine-grained enough for a time limit.
+            raw.sqlite3_progress_handler(
+                self.handle,
+                1000,
+                fun(): i32 = if deadline.get() > 0 && time.now_ms() > deadline.get() {
+                    1
+                } else {
+                    0
+                },
+            );
+        }
+        Ok(())
+    }
+
+    /**
+     * Closes the database. Closing twice does nothing.
+     *
+     * Example:
+     *     db.close()
+     */
+    public fun close(self) {
+        if self.open.get() {
+            self.open.set(false);
+            raw.sqlite3_close_v2(self.handle);
+        }
+    }
+
+    /** `Err(Misuse)` once closed. */
+    fun live(self): Result<(), SqliteError> = if self.open.get() {
+        Ok(())
+    } else {
+        Err(errors.misuse("This database is closed"))
+    };
+
+    /** Starts a call's clock, when a time limit is set. */
+    fun start(self) {
+        let limit = self.limit_ms.get();
+        self.deadline.set(if limit > 0 { time.now_ms() + limit } else { 0 });
+    }
+}
+
+/**
+ * Caps the memory SQLite may use across the whole program (not per
+ * database); 0 removes the cap. Returns the cap before.
+ *
+ * Example:
+ *     sqlite.heap_limit(256 * 1024 * 1024)
+ */
+public fun heap_limit(bytes: i64): i64 = raw.sqlite3_hard_heap_limit64(bytes);
+
+/** Opens with `flags`; a handle SQLite gives back on failure is closed. */
+fun opened(path: string, flags: i32): Result<Database, SqliteError> {
+    let mut handle: Option<raw.sqlite3> = None;
+    let code = raw.sqlite3_open_v2(path, out handle, flags, None);
+    match handle {
+        Some(h) if code == raw.SQLITE_OK => Ok(Database {
+            handle: h,
+            open: Ref.new(true),
+            limit_ms: Ref.new(0),
+            deadline: Ref.new(0),
+        }),
+        Some(h) => {
+            let e = errors.failure(h, code);
+            raw.sqlite3_close_v2(h);
+            Err(e)
+        }
+        None => Err(SqliteError {
+            kind: kind_of(code),
+            code: code,
+            extended: code,
+            message: raw.sqlite3_errstr(code),
+        }),
+    }
+}

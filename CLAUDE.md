@@ -121,8 +121,8 @@ Keep this list, `.llmignore` and `.claude/settings.json` in sync.
 ## COMMANDS
 
 ```bash
-lughac check examples/hello.la      # lex, parse, type-check
-lughac build examples/hello.la      # compile and link (needs libsqlite3)
+lughac check examples/notes.la      # lex, parse, type-check
+lughac build examples/notes.la      # compile and link (needs libsqlite3)
 lughac test test/                   # every @test
 lughac fmt --check src examples test
 lughac spec                         # the Lugha reference: check it before assuming a feature exists
@@ -164,10 +164,11 @@ Expected failures return `Result<T, E>` with a typed error enum per module. A ba
 ├── CLAUDE.md MEMORY.md CONTEXT.md DECISIONS.md CHANGELOG.md .llmignore
 ├── .claude/settings.json — deny rules mirroring .llmignore
 ├── lugha.toml            — package `sqlite`, source `src`, links `sqlite3`, compiles `c/shim.c`
-├── (c/shim.c)            — one-call C functions for what an extern can't reach (DECISION-002), created by PRP-001
-├── src/lib.la            — the entry (`import sqlite;`), the safe API: the lughac init placeholder today
-├── (src/raw.la)          — `sqlite.raw`, the externs, created by PRP-001
-├── examples/hello.la     — placeholder example
+├── c/shim.c              — one-call C functions for what an extern can't reach (DECISION-002), created by PRP-001
+├── src/lib.la            — the entry (`import sqlite;`): `Database`, `heap_limit`, re-exporting the rest
+├── src/raw.la            — `sqlite.raw`, the externs (sqlite3.h 3.46.1) and c/shim.c's three
+├── src/errors.la values.la statements.la guards.la — the safe layer: errors and kinds; Value, Rows, Ran; one statement prepared, bound, stepped, finalized; the guardrails and the authorizer
+├── examples/notes.la     — a guarded database in memory
 ├── test/                 — @test files mirroring src/
 ├── PRPs/                 — TEMPLATE.md, DISCOVERY.md, prp-{NNN}-….md
 ├── LICENSE               — GPL-3.0-only
@@ -188,4 +189,4 @@ Expected failures return `Result<T, E>` with a typed error enum per module. A ba
 
 ## KNOWN ISSUES — DO NOT FIX
 
-- `src/lib.la` and `examples/hello.la` are the `lughac init` placeholders, kept until PRP-001 replaces them.
+- The update hook isn't called for `WITHOUT ROWID` tables or truncate-style deletes, and the authorizer and progress handler closures are kept for the program's life (SQLite gives no release): see PRP-001's amendments.

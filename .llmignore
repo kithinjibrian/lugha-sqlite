@@ -11,8 +11,8 @@ lugha.lock
 LICENSE
 
 # Built executables (see .gitignore)
-/hello
-/examples/hello
+/notes
+/examples/notes
 
 # The system's SQLite: read the header, never edit
 /usr/include/sqlite3.h

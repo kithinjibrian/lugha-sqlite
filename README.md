@@ -11,7 +11,7 @@ A safe API over SQLite's C API: open a database, run SQL with bound parameters, 
 
 ## Status
 
-Early: the bindings are being written (PRP-001).
+PRP-001 built: open, run, query, batch, change notices and the guardrails. See `examples/notes.la`.
 
 ## License
 

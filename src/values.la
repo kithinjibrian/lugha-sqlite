@@ -1,0 +1,34 @@
+/**
+ * Values, rows and run results: what goes into a statement's parameters
+ * and what comes back. SQLite's five storage classes, nothing more.
+ *
+ * Used by: lib, statements
+ */
+
+/** One SQLite value: a parameter, or a column of a row. */
+public enum Value {
+    Integer(i64),
+    Real(f64),
+    /** UTF-8 text; it may hold any character, NUL included. */
+    Text(string),
+    Bytes(u8[]),
+    Null,
+}
+
+/** What a query returned. */
+public struct Rows {
+    /** The columns' names, in order. */
+    public columns: string[],
+    /** Each row's values, in the columns' order. */
+    public values: Value[][],
+    /** Whether there were more rows than asked for. */
+    public cut: bool,
+}
+
+/** What a statement that changes data did. */
+public struct Ran {
+    /** Rows inserted, updated or deleted. */
+    public changes: i64,
+    /** The rowid of the last row inserted on this connection. */
+    public last_rowid: i64,
+}

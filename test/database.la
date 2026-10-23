@@ -1,0 +1,195 @@
+// The safe API (PRP-001): opening, running SQL with bound parameters,
+// reading rows, batches, errors and change notices. In-memory databases,
+// or files under test/tmp/.
+import sqlite { Database, Value, Rows, SqliteError, Kind };
+import std.fs;
+
+fun db(): Database = Database.open(":memory:").unwrap();
+
+fun kind_of(r: Result<Rows, SqliteError>): Kind = match r {
+    Err(e) => e.kind,
+    Ok(_) => Kind.Other,
+};
+
+@test
+fun every_value_type_round_trips() {
+    let d = db();
+    d.run("CREATE TABLE t (i INTEGER, r REAL, s TEXT, b BLOB, n)", []).unwrap();
+    d.run("INSERT INTO t VALUES (?, ?, ?, ?, ?)", [
+        Value.Integer(-42),
+        Value.Real(1.5),
+        Value.Text("héllo"),
+        Value.Bytes([0, 1, 255]),
+        Value.Null,
+    ]).unwrap();
+    let rows = d.query("SELECT i, r, s, b, n FROM t", [], 10).unwrap();
+    assert_eq(rows.columns, ["i", "r", "s", "b", "n"]);
+    assert_eq(rows.values.len, 1);
+    assert_eq(
+        rows.values[0] == [
+            Value.Integer(-42),
+            Value.Real(1.5),
+            Value.Text("héllo"),
+            Value.Bytes([0, 1, 255]),
+            Value.Null,
+        ],
+        true,
+    );
+    assert_eq(rows.cut, false);
+    d.close();
+}
+
+@test
+fun values_are_parameters_never_sql() {
+    let d = db();
+    d.run("CREATE TABLE t (s TEXT)", []).unwrap();
+    let sneaky = "x'); DROP TABLE t; --";
+    d.run("INSERT INTO t VALUES (?)", [Value.Text(sneaky)]).unwrap();
+    let rows = d.query("SELECT s FROM t", [], 10).unwrap();
+    assert_eq(rows.values[0] == [Value.Text(sneaky)], true);
+    // Text with a NUL inside comes back whole.
+    d.run("INSERT INTO t VALUES (?)", [Value.Text("a\0b")]).unwrap();
+    assert_eq(
+        d.query("SELECT s FROM t WHERE rowid = 2", [], 1).unwrap().values[0] == [
+            Value.Text("a\0b"),
+        ],
+        true,
+    );
+    d.close();
+}
+
+@test
+fun one_statement_at_a_time() {
+    let d = db();
+    let two = d.run("CREATE TABLE a (x); CREATE TABLE b (y)", []);
+    assert_eq(
+        match two {
+            Err(e) => e.kind == Kind.Misuse,
+            Ok(_) => false,
+        },
+        true,
+    );
+    // A trailing semicolon and spaces are one statement.
+    assert_eq(d.run("CREATE TABLE a (x);  ", []).is_ok(), true);
+    d.close();
+}
+
+@test
+fun run_reports_changes_and_the_last_rowid() {
+    let d = db();
+    d.run("CREATE TABLE t (x)", []).unwrap();
+    let one = d.run("INSERT INTO t VALUES (?)", [Value.Integer(1)]).unwrap();
+    assert_eq((one.changes, one.last_rowid), (1, 1));
+    d.run("INSERT INTO t VALUES (2)", []).unwrap();
+    assert_eq(d.run("UPDATE t SET x = 0", []).unwrap().changes, 2);
+    d.close();
+}
+
+@test
+fun query_stops_at_its_row_cap() {
+    let d = db();
+    d.run("CREATE TABLE t (x)", []).unwrap();
+    for i in 0..5 {
+        d.run("INSERT INTO t VALUES (?)", [Value.Integer(i)]).unwrap();
+    }
+    let rows = d.query("SELECT x FROM t ORDER BY x", [], 3).unwrap();
+    assert_eq((rows.values.len, rows.cut), (3, true));
+    d.close();
+}
+
+@test
+fun errors_say_what_kind_and_why() {
+    let d = db();
+    let bad = d.query("SELEC nonsense", [], 1);
+    assert_eq(
+        match bad {
+            Err(e) => e.kind == Kind.Other && e.message.contains("syntax error"),
+            Ok(_) => false,
+        },
+        true,
+    );
+    d.run("CREATE TABLE t (x UNIQUE)", []).unwrap();
+    d.run("INSERT INTO t VALUES (1)", []).unwrap();
+    assert_eq(
+        match d.run("INSERT INTO t VALUES (1)", []) {
+            Err(e) => e.kind == Kind.Constraint,
+            Ok(_) => false,
+        },
+        true,
+    );
+    // A missing parameter is an error, not NULL.
+    assert_eq(
+        match d.run("INSERT INTO t VALUES (?)", []) {
+            Err(e) => e.kind == Kind.Misuse,
+            Ok(_) => false,
+        },
+        true,
+    );
+    d.close();
+}
+
+@test
+fun a_read_only_database_refuses_writes() {
+    fs.make_dirs("test/tmp").unwrap();
+    let path = "test/tmp/read_only.db";
+    if fs.exists(path) {
+        fs.remove_file(path).unwrap();
+    }
+    let w = Database.open(path).unwrap();
+    w.run("CREATE TABLE t (x)", []).unwrap();
+    w.close();
+    let r = Database.open_read_only(path).unwrap();
+    assert_eq(
+        match r.run("INSERT INTO t VALUES (1)", []) {
+            Err(e) => e.kind == Kind.ReadOnly,
+            Ok(_) => false,
+        },
+        true,
+    );
+    r.close();
+    fs.remove_file(path).unwrap();
+}
+
+@test
+fun a_batch_is_all_or_nothing() {
+    let d = db();
+    d.run("CREATE TABLE t (x UNIQUE)", []).unwrap();
+    let ok = d.batch([
+        ("INSERT INTO t VALUES (?)", [Value.Integer(1)]),
+        ("INSERT INTO t VALUES (?)", [Value.Integer(2)]),
+    ]);
+    assert_eq(ok.is_ok(), true);
+    let failed = d.batch([
+        ("INSERT INTO t VALUES (?)", [Value.Integer(3)]),
+        ("INSERT INTO t VALUES (?)", [Value.Integer(1)]),
+    ]);
+    assert_eq(failed.is_err(), true);
+    // The 3 went back with the failure.
+    assert_eq(
+        d.query("SELECT count(*) FROM t", [], 1).unwrap().values[0] == [Value.Integer(2)],
+        true,
+    );
+    d.close();
+}
+
+@test
+fun changes_are_reported_by_table_and_row() {
+    let d = db();
+    let seen: Ref<string[]> = Ref.new([]);
+    d.on_change(fun(table: string, rowid: i64) {
+        seen.update(fun(xs: string[]) {
+            let mut next = xs;
+            next.push("{table}:{rowid}");
+            next
+        });
+    });
+    d.run("CREATE TABLE t (x)", []).unwrap();
+    d.run("INSERT INTO t VALUES (1)", []).unwrap();
+    d.run("UPDATE t SET x = 2 WHERE rowid = 1", []).unwrap();
+    d.run("DELETE FROM t WHERE rowid = 1", []).unwrap();
+    assert_eq(seen.get(), ["t:1", "t:1", "t:1"]);
+    d.close();
+    // Closing twice does nothing; using it after is an error.
+    d.close();
+    assert_eq(kind_of(d.query("SELECT 1", [], 1)) == Kind.Misuse, true);
+}

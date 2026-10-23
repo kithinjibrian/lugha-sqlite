@@ -34,7 +34,7 @@ Resolved decisions and the project's state. Read at the start of every session.
 - The context system and the `lughac init --lib` skeleton (session 1).
 
 ### In Progress
-- PRP-001 (the core bindings), written, awaiting approval.
+- PRP-001 (the core bindings), built in session 3, awaiting the owner's test run.
 
 ### Not Started
 - The session extension (changesets), backups, user functions, incremental blobs.

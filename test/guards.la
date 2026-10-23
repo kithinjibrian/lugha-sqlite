@@ -1,0 +1,127 @@
+// The guardrails for SQL a program didn't write (PRP-001): what the
+// authorizer denies, the time limit, the size limit, the SQL length limit
+// and the defensive flag.
+import sqlite { Database, Value, Guard, Kind, SqliteError, Ran, decide };
+import sqlite.raw;
+
+fun guarded(g: Guard): Database {
+    let d = Database.open(":memory:").unwrap();
+    d.guard(g).unwrap();
+    d
+}
+
+fun kind(r: Result<Ran, SqliteError>): Kind = match r {
+    Err(e) => e.kind,
+    Ok(_) => Kind.Other,
+};
+
+@test
+fun ordinary_work_is_allowed() {
+    let d = guarded(Guard.untrusted());
+    d.run("CREATE TABLE t (id INTEGER PRIMARY KEY, x TEXT)", []).unwrap();
+    d.run("CREATE INDEX t_x ON t (x)", []).unwrap();
+    d.run("INSERT INTO t (x) VALUES (?)", [Value.Text("a")]).unwrap();
+    d.run("PRAGMA user_version = 3", []).unwrap();
+    assert_eq(d.query("PRAGMA user_version", [], 1).unwrap().values[0] == [Value.Integer(3)], true);
+    assert_eq(
+        d.query("SELECT x FROM t WHERE id = ?", [Value.Integer(1)], 1).unwrap().values.len,
+        1,
+    );
+    d.close();
+}
+
+@test
+fun what_untrusted_sql_may_not_do() {
+    let d = guarded(Guard.untrusted());
+    assert_eq(kind(d.run("ATTACH DATABASE 'other.db' AS o", [])) == Kind.Denied, true);
+    assert_eq(kind(d.run("PRAGMA max_page_count = 999999999", [])) == Kind.Denied, true);
+    assert_eq(kind(d.run("PRAGMA writable_schema = ON", [])) == Kind.Denied, true);
+    assert_eq(kind(d.run("SELECT load_extension('x')", [])) == Kind.Denied, true);
+    d.run("CREATE TABLE t (x)", []).unwrap();
+    assert_eq(kind(d.run("DELETE FROM sqlite_schema", [])) == Kind.Denied, true);
+    d.close();
+}
+
+@test
+fun a_query_past_the_time_limit_is_stopped() {
+    let d = guarded(Guard { time_limit_ms: 50, ..Guard.untrusted() });
+    let forever = d.query(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT count(*) FROM n",
+        [],
+        1,
+    );
+    assert_eq(
+        match forever {
+            Err(e) => e.kind == Kind.Interrupted,
+            Ok(_) => false,
+        },
+        true,
+    );
+    // The next statement runs as usual.
+    assert_eq(d.query("SELECT 1", [], 1).is_ok(), true);
+    d.close();
+}
+
+@test
+fun a_database_past_its_size_is_full() {
+    let d = guarded(Guard { max_bytes: 64 * 1024, ..Guard.untrusted() });
+    d.run("CREATE TABLE t (b BLOB)", []).unwrap();
+    let mut big: u8[] = [];
+    for _ in 0..4096 {
+        big.push(7);
+    }
+    let mut last: Result<Ran, SqliteError> = d.run("SELECT 1", []);
+    for _ in 0..64 {
+        last = d.run("INSERT INTO t VALUES (?)", [Value.Bytes(big)]);
+        if last.is_err() {
+            break;
+        }
+    }
+    assert_eq(kind(last) == Kind.Full, true);
+    d.close();
+}
+
+@test
+fun sql_longer_than_its_limit_is_too_big() {
+    let d = guarded(Guard { max_sql: 100, ..Guard.untrusted() });
+    let mut long = "SELECT 1";
+    for _ in 0..50 {
+        long = long + " + 1";
+    }
+    assert_eq(
+        match d.query(long, [], 1) {
+            Err(e) => e.kind == Kind.TooBig,
+            Ok(_) => false,
+        },
+        true,
+    );
+    d.close();
+}
+
+@test
+fun the_defensive_flag_keeps_the_schema_read_only() {
+    // Without the authorizer, so the flag alone is what refuses it.
+    let d = guarded(Guard { deny: false, ..Guard.untrusted() });
+    d.run("CREATE TABLE t (x)", []).unwrap();
+    d.run("PRAGMA writable_schema = ON", []).unwrap();
+    assert_eq(d.run("UPDATE sqlite_schema SET sql = sql", []).is_err(), true);
+    d.close();
+}
+
+@test
+fun the_authorizer_decides_by_action() {
+    assert_eq(decide(raw.SQLITE_ATTACH, Some("x.db"), None, None), raw.SQLITE_DENY);
+    assert_eq(decide(raw.SQLITE_PRAGMA, Some("USER_VERSION"), None, Some("main")), raw.SQLITE_OK);
+    assert_eq(
+        decide(raw.SQLITE_PRAGMA, Some("journal_mode"), Some("off"), Some("main")),
+        raw.SQLITE_DENY,
+    );
+    assert_eq(decide(raw.SQLITE_FUNCTION, None, Some("load_extension"), None), raw.SQLITE_DENY);
+    assert_eq(decide(raw.SQLITE_FUNCTION, None, Some("count"), None), raw.SQLITE_OK);
+    assert_eq(
+        decide(raw.SQLITE_INSERT, Some("sqlite_master"), None, Some("main")),
+        raw.SQLITE_DENY,
+    );
+    assert_eq(decide(raw.SQLITE_INSERT, Some("notes"), None, Some("main")), raw.SQLITE_OK);
+    assert_eq(decide(raw.SQLITE_READ, Some("notes"), Some("text"), Some("other")), raw.SQLITE_DENY);
+}
