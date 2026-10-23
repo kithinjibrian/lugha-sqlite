@@ -30,6 +30,10 @@ Branch: main
 - PRP-001 revised: `c/shim.c` with three one-call functions (`db_config` for the defensive flag, and binding text and blobs with `SQLITE_TRANSIENT`). Its two questions are gone.
 - DECISION-002 recorded; MEMORY.md decision 3; CLAUDE.md's extern rule and tree updated. No code.
 
+## SESSION 3 — 2026-10-24 — Build PRP-001: the core bindings — open
+
+Branch: main
+
 ---
 
 ## NEXT SESSION START POINT
