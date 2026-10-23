@@ -54,8 +54,16 @@ Branch: main
 - The owner's second run: 16 of 16, exit 0.
 - Published at the owner's word ("yes publish it"): `github.com/kithinjibrian/lugha-sqlite`, public, `origin`; `main` pushed.
 
+## SESSION 5 — 2026-10-24 — Tag v0.1.0 — closed
+
+Branch: main
+
+### WHAT WAS DONE
+
+- Tagged `v0.1.0` at the owner's word ("yes tag it"), a lightweight tag as lugha-wasmtime's, and pushed it, so Rapidkoi can take `version = "0.1"`.
+
 ---
 
 ## NEXT SESSION START POINT
 
-PRP-001 is built, tested (16 of 16) and published (`github.com/kithinjibrian/lugha-sqlite`, session 4). Next is Rapidkoi's storage PRP, which takes this package by git URL. A version tag for it (Rapidkoi's manifests name `version = "0.1"`) is asked first.
+PRP-001 is built, tested (16 of 16) and published (`github.com/kithinjibrian/lugha-sqlite`, session 4). Next is Rapidkoi's storage PRP, which takes this package by git URL. It's tagged `v0.1.0` (session 5).
