@@ -130,4 +130,5 @@ Against `:memory:` or `test/tmp/`:
 - **Hooks aren't cleared before close.** SQLite never calls them after `sqlite3_close_v2`, and a callback parameter can't be passed as `NULL` from Lugha. The authorizer's and progress handler's closures are kept for the program's life: SQLite gives them no release.
 - **The time limit** is a progress handler checked every 1000 steps against a deadline each call sets (`run`, `query`, `batch`).
 - **Tests added:** the defensive flag on its own (with the authorizer off), and `decide` action by action.
+- **Session 4, the owner's test run (13 of 16 passed):** the authorizer denied writing the schema tables, which also denied every `CREATE TABLE`, since SQLite reports its own schema write as an INSERT into `sqlite_master`. That rule is gone: SQLite refuses direct writes to its schema, the defensive flag keeps it so, and `writable_schema` stays denied. `load_extension` fails as "no such function" in this build (it isn't compiled in), so its test checks that it fails, not how.
 

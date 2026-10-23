@@ -12,7 +12,12 @@ import errors { SqliteError };
 
 /** What a database refuses, and how far it lets a statement go. */
 public struct Guard {
-    /** The authorizer: no ATTACH, no extensions, safe PRAGMAs only, no writing the schema tables. */
+    /**
+     * The authorizer: no ATTACH, no extensions, safe PRAGMAs only, no other
+     * database. The schema tables aren't its to guard: SQLite reports its own
+     * writes to them while creating a table, refuses direct ones itself, and
+     * the defensive flag keeps them so.
+     */
     public deny: bool,
     /** How long one call (a run, a query, a batch) may take, in milliseconds; 0 for no limit. */
     public time_limit_ms: i64,
@@ -36,14 +41,6 @@ const SAFE_PRAGMAS: string[] = [
     "index_info",
     "index_xinfo",
     "foreign_key_list",
-];
-
-/** The tables that hold the schema itself. */
-const SCHEMA_TABLES: string[] = [
-    "sqlite_master",
-    "sqlite_schema",
-    "sqlite_temp_master",
-    "sqlite_temp_schema",
 ];
 
 impl Guard {
@@ -93,10 +90,6 @@ public fun decide(
     if action == raw.SQLITE_FUNCTION {
         // A function's name is the second detail; loading code is never allowed.
         return if lower(b.unwrap_or("")) == "load_extension" { deny } else { ok };
-    }
-    let changes = action == raw.SQLITE_INSERT || action == raw.SQLITE_UPDATE || action == raw.SQLITE_DELETE;
-    if changes && SCHEMA_TABLES.any(fun(t: string) = t == lower(a.unwrap_or(""))) {
-        return deny;
     }
     // Only its own database: never one attached by other means.
     match database {
