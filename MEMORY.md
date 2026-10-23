@@ -20,6 +20,12 @@ Resolved decisions and the project's state. Read at the start of every session.
 
 **Why:** One file to audit against the header; nothing unsafe reaches callers.
 
+### 3. A C shim, only where an extern can't reach (DECISION-002)
+
+**Decision:** `c/shim.c` holds one-call C functions for what Lugha can't declare: the variadic `sqlite3_db_config` and `SQLITE_TRANSIENT`. Everything else is a Lugha extern.
+
+**Why:** Lugha supports no variadic externs and can't make pointers; it recommends shims (its CONTEXT.md).
+
 ---
 
 ## CURRENT PROJECT STATE

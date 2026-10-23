@@ -22,6 +22,7 @@ db.close();
 - Ending state:
   - **`src/raw.la` (`sqlite.raw`):** the externs, copied from `/usr/include/sqlite3.h` (3.46.1).
   - **`src/lib.la`:** the entry, `Database`, `Value`, `Rows`, `Guard`, `SqliteError`.
+  - **`c/shim.c`:** the three C functions below.
   - `src/statements.la`, `src/guards.la` as the safe layer grows (each under 400 lines).
   - `examples/notes.la`, replacing `hello.la`.
   - Tests in `test/`.
@@ -30,10 +31,10 @@ db.close();
   - **Errors:** `sqlite3_errmsg`, `sqlite3_extended_errcode`, `sqlite3_errstr`.
   - **Statements:**
     - prepare, step, reset, finalize: `sqlite3_prepare_v2`, `sqlite3_step`, `sqlite3_reset`, `sqlite3_clear_bindings`, `sqlite3_finalize`;
-    - binding: `sqlite3_bind_parameter_count`, `sqlite3_bind_int64`, `sqlite3_bind_double`, `sqlite3_bind_text`, `sqlite3_bind_blob`, `sqlite3_bind_null`;
+    - binding: `sqlite3_bind_parameter_count`, `sqlite3_bind_int64`, `sqlite3_bind_double`, `sqlite3_bind_null`, and text and blobs through the shim (`SQLITE_TRANSIENT`);
     - reading columns: `sqlite3_column_count`, `sqlite3_column_name`, `sqlite3_column_type`, `sqlite3_column_int64`, `sqlite3_column_double`, `sqlite3_column_text`, `sqlite3_column_blob`, `sqlite3_column_bytes`;
     - `sqlite3_changes64`, `sqlite3_last_insert_rowid`.
-  - **Guardrails:** `sqlite3_set_authorizer`, `sqlite3_progress_handler`, `sqlite3_interrupt`, `sqlite3_limit`, `sqlite3_hard_heap_limit64`, plus `PRAGMA max_page_count` and `PRAGMA trusted_schema = OFF` through plain SQL.
+  - **Guardrails:** `SQLITE_DBCONFIG_DEFENSIVE` (through the shim), `sqlite3_set_authorizer`, `sqlite3_progress_handler`, `sqlite3_interrupt`, `sqlite3_limit`, `sqlite3_hard_heap_limit64`, plus `PRAGMA max_page_count` and `PRAGMA trusted_schema = OFF` through plain SQL.
   - **Change notices:** `sqlite3_update_hook`.
   - **Transactions:** plain SQL (`BEGIN`, `COMMIT`, `ROLLBACK`); `Database.batch` runs several statements in one, rolled back on any failure.
 - **Ownership:**
@@ -42,22 +43,22 @@ db.close();
   - Text from C (`sqlite3_column_text`, `errmsg`) is copied by Lugha (spec section 8). Blobs are copied with `c_read` after `sqlite3_column_bytes`.
   - Closures handed to C are pinned with `data` (spec section 8) and live as long as their database.
 - **Lugha spec sections relied on:** section 8 (externs, `out`/`ptr`/`mut` parameters, callbacks with `data`, `CPtr`, `c_read`), `Result`, enums. Each is confirmed while building.
-- Open decisions that must be resolved first: the two questions below.
+- Open decisions that must be resolved first: none (DECISION-002, the shim, resolved by the owner).
 
-## QUESTIONS FOR THE OWNER (found while writing this)
+## A C SHIM FOR WHAT LUGHA CAN'T DECLARE (the owner, session 2; DECISION-002)
 
-1. **SQLite's defensive flag needs a C function Lugha can't declare.**
-   - `SQLITE_DBCONFIG_DEFENSIVE` is set through `sqlite3_db_config`, which is variadic. Lugha's spec says variadic C functions can't be declared.
-   - Options:
-     - (a) Ask for variadic externs in `../lugha` (an upstream change, under its rules), and bind the flag once it lands.
-     - (b) Go without the flag for now. The authorizer denies what it guards against: writing the schema by hand (`PRAGMA writable_schema`), raw page access (`sqlite_dbpage`), and the schema tables. `trusted_schema = OFF` is set by SQL.
-   - **Recommended: (b) now, and (a) asked upstream,** recorded as DECISION-002, never worked around in secret.
-2. **SQLite can't be told to copy a bound string.**
-   - That's `SQLITE_TRANSIENT`, the pointer value −1, which Lugha can't make (a pointer only comes from C).
-   - Options:
-     - (a) `SQLITE_STATIC` (`NULL`): SQLite reads the value in place. The package keeps every bound value referenced until the statement is reset or finalized, so Boehm never frees it while SQLite may read it.
-     - (b) Ask upstream for a way to make that one constant.
-   - **Recommended: (a).** It's how SQLite is meant to be used for values that outlive the step, and the safe layer guarantees it. Recorded as DECISION-003. CLAUDE.md's extern rule is updated to match.
+Two pieces of SQLite's API can't be reached from a Lugha `extern`:
+- `sqlite3_db_config`, which sets `SQLITE_DBCONFIG_DEFENSIVE`, is variadic, and Lugha has no variadic externs.
+- `SQLITE_TRANSIENT`, which tells SQLite to copy a bound string or blob, is the pointer value −1, and Lugha can't make a pointer.
+
+Lugha's own answer is a C shim (`../lugha` CONTEXT.md: variadic externs, "recommended C shims for now"). lughac compiles a package's C files into every program using it (`[link] c = […]`, spec section 6). So:
+- **`c/shim.c` (new):** three functions, each one call into SQLite and nothing else:
+  - `int lugha_sqlite_db_config_flag(sqlite3 *db, int op, int on)` → `sqlite3_db_config(db, op, on, (int *)0)`;
+  - `int lugha_sqlite_bind_text(sqlite3_stmt *s, int i, const char *text, int n)` → `sqlite3_bind_text(s, i, text, n, SQLITE_TRANSIENT)`;
+  - `int lugha_sqlite_bind_blob(sqlite3_stmt *s, int i, const void *bytes, int n)` → `sqlite3_bind_blob(s, i, bytes, n, SQLITE_TRANSIENT)`.
+- **`lugha.toml`:** `[link] c = ["c/shim.c"]`.
+- **`src/raw.la`** declares the three as externs, beside SQLite's own, their doc comments naming `c/shim.c`.
+- SQLite copies every bound text and blob, so Lugha's memory is never kept by C, as CLAUDE.md's extern rule says. The defensive flag is set by `Guard.untrusted()`.
 
 ## IMPLEMENTATION REQUIREMENTS
 
@@ -69,7 +70,8 @@ db.close();
   - a progress handler stopping a statement past a time limit (default 1 s);
   - `sqlite3_limit` lowering SQL length, columns, attached databases (0) and so on;
   - `max_page_count` for size;
-  - `trusted_schema = OFF`.
+  - `trusted_schema = OFF`;
+  - the defensive flag.
   - Each is a field a caller can set, with documented defaults.
 - `query` stops at a row cap the caller gives (`max_rows`) and reports that it was cut.
 - `sqlite3_hard_heap_limit64` is process-wide: exposed as `sqlite.heap_limit(bytes)`, documented as such, not per database.
@@ -87,13 +89,14 @@ db.close();
 ## SECURITY CONSIDERATIONS
 - Untrusted SQL is this package's reason for guardrails; they're tested one by one.
 - **New `[link]` dependency: `sqlite3`** (the system's libsqlite3), the package's whole purpose.
+- **C code in the package: `c/shim.c`.** Owner review: three functions, each one call, no logic. Every other binding stays a Lugha extern.
 - Callbacks are pinned for their database's life and never called after it closes (the hooks are cleared before `sqlite3_close_v2`).
 
 ## TESTS TO WRITE
 
 Against `:memory:` or `test/tmp/`:
 - [ ] Open, create, insert, query: columns and each value type (integer, real, text, blob, null) round-trip.
-- [ ] Parameters: each type binds. A value with quotes in it is stored as text, never run as SQL.
+- [ ] Parameters: each type binds. A value with quotes in it is stored as text, never run as SQL. Text and blobs are copied: changing the Lugha value after binding changes nothing stored.
 - [ ] Errors: a syntax error, a constraint, a read-only file (`Database.open_read_only`), each with its kind and message.
 - [ ] `batch`: all or nothing; a failing statement rolls back the earlier ones.
 - [ ] Guardrails:
@@ -101,6 +104,7 @@ Against `:memory:` or `test/tmp/`:
   - a recursive query past the time limit fails as `Interrupted`;
   - inserting past `max_page_count` fails as `Full`;
   - SQL longer than the limit fails as `TooBig`;
+  - with the defensive flag on, `PRAGMA writable_schema = ON` has no effect;
   - `max_rows` cuts.
 - [ ] `on_change` reports the table and rowid of inserts, updates and deletes.
 - [ ] Closing with a hook set, and closing twice, are safe.
@@ -112,7 +116,7 @@ Against `:memory:` or `test/tmp/`:
 - [ ] Every extern checked against `/usr/include/sqlite3.h` (3.46.1).
 - [ ] `lughac test test/` passes (the owner runs it); `examples/notes.la` builds.
 - [ ] `lughac fmt --check src examples test` is clean; every public item documented; no file over 400 lines.
-- [ ] CHANGELOG.md updated; DECISION-002 and DECISION-003 recorded.
+- [ ] CHANGELOG.md updated; DECISION-002 (the shim) recorded.
 
 ## VALIDATION
 - `lughac fmt --check src examples test`, `lughac test test/`, `lughac build examples/notes.la`

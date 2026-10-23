@@ -48,7 +48,8 @@ A wrong extern is memory corruption, not a type error.
 - The doc comment of every extern names its header: `/** … (sqlite3.h) */`.
 - Ownership is stated on every extern that takes or returns a pointer: who frees it, and with which call (`sqlite3_close_v2`, `sqlite3_finalize`). A handle Lugha owns is freed exactly once.
 - Bindings track one SQLite version (`docs/SQLITE_VERSION`). Changing it is a PRP that re-checks every extern against the new header.
-- Text and bytes bound to a statement are passed with `SQLITE_TRANSIENT`, so SQLite copies them: Lugha's memory is never kept by C.
+- Text and bytes bound to a statement are passed with `SQLITE_TRANSIENT`, through `c/shim.c`, so SQLite copies them: Lugha's memory is never kept by C.
+- **C shims only where an extern can't reach** (DECISION-002): variadic functions and C-only constants. Each shim function is one call into SQLite, no logic, declared in `src/raw.la` with its doc comment naming `c/shim.c`.
 - Closures handed to C (the authorizer, progress handler, update hook) are pinned with `data`/`release`, as lugha-gtk does.
 
 ---
@@ -162,7 +163,8 @@ Expected failures return `Result<T, E>` with a typed error enum per module. A ba
 .
 ├── CLAUDE.md MEMORY.md CONTEXT.md DECISIONS.md CHANGELOG.md .llmignore
 ├── .claude/settings.json — deny rules mirroring .llmignore
-├── lugha.toml            — package `sqlite`, source `src`, links `sqlite3`
+├── lugha.toml            — package `sqlite`, source `src`, links `sqlite3`, compiles `c/shim.c`
+├── (c/shim.c)            — one-call C functions for what an extern can't reach (DECISION-002), created by PRP-001
 ├── src/lib.la            — the entry (`import sqlite;`), the safe API: the lughac init placeholder today
 ├── (src/raw.la)          — `sqlite.raw`, the externs, created by PRP-001
 ├── examples/hello.la     — placeholder example

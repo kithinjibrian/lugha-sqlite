@@ -20,12 +20,18 @@ Branch: main
 - Checked on this machine: `libsqlite3.so.0` exports the session extension, authorizer, progress handler, update hook and heap limit. `sqlite3.h` isn't installed yet (`libsqlite3-dev`, the owner's to install).
 - Wrote `PRPs/prp-001-core_bindings.md`. It raises two questions (variadic `sqlite3_db_config`, `SQLITE_TRANSIENT`) for the owner. No code.
 
-## SESSION 2 — 2026-10-24 — PRP-001 revised: a C shim for what Lugha can't declare — open
+## SESSION 2 — 2026-10-24 — PRP-001 revised: a C shim for what Lugha can't declare — closed
 
 Branch: main
+
+### WHAT WAS DONE
+
+- The owner: Lugha's plan is no variadics, so C shims instead. Confirmed in `../lugha` (its CONTEXT.md: "recommended C shims for now"; spec section 6: `[link] c = [...]`).
+- PRP-001 revised: `c/shim.c` with three one-call functions (`db_config` for the defensive flag, and binding text and blobs with `SQLITE_TRANSIENT`). Its two questions are gone.
+- DECISION-002 recorded; MEMORY.md decision 3; CLAUDE.md's extern rule and tree updated. No code.
 
 ---
 
 ## NEXT SESSION START POINT
 
-The owner reviews PRP-001 and answers its two questions; `libsqlite3-dev` must be installed before building (every extern is copied from `/usr/include/sqlite3.h`). No remote: publishing to GitHub is asked first.
+The owner reviews PRP-001 (revised session 2: a C shim, DECISION-002); `libsqlite3-dev` must be installed before building (every extern is copied from `/usr/include/sqlite3.h`). No remote: publishing to GitHub is asked first.
