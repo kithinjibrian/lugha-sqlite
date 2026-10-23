@@ -20,6 +20,10 @@ Branch: main
 - Checked on this machine: `libsqlite3.so.0` exports the session extension, authorizer, progress handler, update hook and heap limit. `sqlite3.h` isn't installed yet (`libsqlite3-dev`, the owner's to install).
 - Wrote `PRPs/prp-001-core_bindings.md`. It raises two questions (variadic `sqlite3_db_config`, `SQLITE_TRANSIENT`) for the owner. No code.
 
+## SESSION 2 — 2026-10-24 — PRP-001 revised: a C shim for what Lugha can't declare — open
+
+Branch: main
+
 ---
 
 ## NEXT SESSION START POINT
