@@ -44,6 +44,10 @@ Branch: main
 - `examples/notes.la` replaces `hello.la`. It builds, so the shim and libsqlite3 link.
 - Checks: fmt is clean; both test files check. Tests not run (the owner runs them).
 
+## SESSION 4 — 2026-10-24 — Fix the guard tests; publish to GitHub — open
+
+Branch: main
+
 ---
 
 ## NEXT SESSION START POINT
