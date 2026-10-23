@@ -1,0 +1,6 @@
+// An example using sqlite. Run it with `lughac run examples/hello.la`.
+import sqlite;
+
+fun main() {
+    println(sqlite.greet("world"));
+}

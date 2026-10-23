@@ -1,0 +1,28 @@
+# .llmignore
+# Keep in sync with PROTECTED FILES in CLAUDE.md and .claude/settings.json.
+
+.env
+.env.*
+
+# Lockfile: written only by lughac
+lugha.lock
+
+# License: changed only by the human
+LICENSE
+
+# Built executables (see .gitignore)
+/hello
+/examples/hello
+
+# The system's SQLite: read the header, never edit
+/usr/include/sqlite3.h
+/usr/include/sqlite3ext.h
+/usr/lib/x86_64-linux-gnu/libsqlite3*
+
+# Sibling repositories: read for reference, never write
+../lugha/
+../rapidkoi/
+../kivuli/
+../lugha-gtk/
+../lugha-wasmtime/
+../lugha-cbor/

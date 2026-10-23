@@ -1,0 +1,3 @@
+3.46.1
+# The system libsqlite3 (Ubuntu 3.46.1-9ubuntu0.3), headers from libsqlite3-dev.
+# Every extern in src/raw.la is checked against this version's sqlite3.h.

@@ -1,0 +1,9 @@
+# The package manifest (Lugha spec §6).
+[package]
+name = "sqlite"
+version = "0.1.0"
+source = "src"
+
+# The system's SQLite (docs/SQLITE_VERSION), headers from libsqlite3-dev (DECISION-001).
+[link]
+libs = ["sqlite3"]

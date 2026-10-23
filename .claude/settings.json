@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Edit(./.env)",
+      "Read(./.env.*)",
+      "Edit(./.env.*)",
+      "Edit(./lugha.lock)",
+      "Edit(./LICENSE)",
+      "Edit(/usr/include/sqlite3.h)",
+      "Edit(/usr/include/sqlite3ext.h)",
+      "Edit(/usr/lib/x86_64-linux-gnu/**)",
+      "Edit(../lugha/**)",
+      "Edit(../rapidkoi/**)",
+      "Edit(../kivuli/**)",
+      "Edit(../lugha-gtk/**)",
+      "Edit(../lugha-wasmtime/**)",
+      "Edit(../lugha-cbor/**)"
+    ]
+  }
+}
