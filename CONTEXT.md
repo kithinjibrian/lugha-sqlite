@@ -44,12 +44,18 @@ Branch: main
 - `examples/notes.la` replaces `hello.la`. It builds, so the shim and libsqlite3 link.
 - Checks: fmt is clean; both test files check. Tests not run (the owner runs them).
 
-## SESSION 4 — 2026-10-24 — Fix the guard tests; publish to GitHub — open
+## SESSION 4 — 2026-10-24 — Fix the guard tests; publish to GitHub — closed
 
 Branch: main
+
+### WHAT WAS DONE
+
+- The owner's first run: 13 of 16. The authorizer refused SQLite's own schema write in `CREATE TABLE`; that rule is removed (SQLite and the defensive flag guard the schema). `load_extension` isn't in this build, so it's tested as failing, not as denied.
+- The owner's second run: 16 of 16, exit 0.
+- Published at the owner's word ("yes publish it"): `github.com/kithinjibrian/lugha-sqlite`, public, `origin`; `main` pushed.
 
 ---
 
 ## NEXT SESSION START POINT
 
-PRP-001 is built (session 3), awaiting the owner's run of `lughac test test/` and `lughac run examples/notes.la`. Then Rapidkoi's storage PRP uses this package. That needs it published to GitHub first (Rapidkoi takes sibling packages by git URL), which is asked first. No remote yet.
+PRP-001 is built, tested (16 of 16) and published (`github.com/kithinjibrian/lugha-sqlite`, session 4). Next is Rapidkoi's storage PRP, which takes this package by git URL. A version tag for it (Rapidkoi's manifests name `version = "0.1"`) is asked first.

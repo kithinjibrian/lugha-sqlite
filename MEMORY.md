@@ -31,10 +31,11 @@ Resolved decisions and the project's state. Read at the start of every session.
 ## CURRENT PROJECT STATE
 
 ### Fully Working
-- The context system and the `lughac init --lib` skeleton (session 1).
+- The context system (session 1).
+- PRP-001, the core bindings: open, run, query, batch, change notices, the guardrails (sessions 3–4). 16 tests pass. Published at github.com/kithinjibrian/lugha-sqlite.
 
 ### In Progress
-- PRP-001 (the core bindings), built in session 3, awaiting the owner's test run.
+- Nothing.
 
 ### Not Started
 - The session extension (changesets), backups, user functions, incremental blobs.
